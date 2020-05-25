@@ -36,6 +36,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
+import android.util.Log;
 import android.view.View;
 import android.widget.ListView;
 import android.widget.TextView;
@@ -68,9 +69,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static com.owncloud.android.lib.ManagerKt.createCloudFolder;
+import static com.owncloud.android.lib.ManagerKt.startReadRootFolder;
 import static com.owncloud.android.lib.ManagerKt.uploadFileOnCloud;
 
-public class MainActivity extends Activity implements OnRemoteOperationListener, OnDatatransferProgressListener {
+public class MainActivity extends Activity {
 
     private Handler mHandler;
     private OwnCloudClient mClient, client;
@@ -85,257 +87,49 @@ public class MainActivity extends Activity implements OnRemoteOperationListener,
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
-        Timber.plant(new DebugTree());
-        mHandler = new Handler();
+        findViewById(R.id.button_refresh).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Toast.makeText(MainActivity.this, "Read", Toast.LENGTH_LONG).show();
+                startReadRootFolder(MainActivity.this, (caller, result) -> {
+                    Timber.tag("hello").e(result.getException());
+                    Timber.tag("hello").e(result.getHttpPhrase());
+                    Timber.tag("hello").e(result.getCode().name());
+                    if (result.getData() != null) {
+                        List<RemoteFile> files = (List<RemoteFile>) result.getData();
+                        Timber.tag("hello").e(result.getData().toString());
+                        Timber.tag("hello").e(files.get(0).getRemotePath());
+                    }
 
-        final Uri serverUri = Uri.parse("http://nextcloud.opensi.co");
-
-        SingleSessionManager.setUserAgent(getUserAgent());
-
-        mClient = OwnCloudClientFactory.createOwnCloudClient(serverUri, this, true);
-
-        mClient.setCredentials(
-                OwnCloudCredentialsFactory.newBasicCredentials(
-                        "arcadius.tchokpodo",
-                        "azertyuiop"
-                )
-        );
-
-        client = new OwnCloudClient(serverUri);
-        client.clearCredentials();
-        client.setCredentials(OwnCloudCredentialsFactory.newBasicCredentials("arcadius.tchokpodo", "azertyuiop"));
-
-        mClient.setAccount(new OwnCloudAccount(serverUri, OwnCloudCredentialsFactory.newBasicCredentials(
-                "arcadius.tchokpodo",
-                "azertyuiop"
-        )));
-
-        mFilesAdapter = new FilesArrayAdapter(this, R.layout.file_in_list);
-        ((ListView) findViewById(R.id.list_view)).setAdapter(mFilesAdapter);
-
-        // TODO move to background thread or task
-        /*AssetManager assets = getAssets();
-        try {
-            String sampleFileName = getString(R.string.sample_file_name);
-            File upFolder = new File(getCacheDir(), getString(R.string.upload_folder_path));
-            upFolder.mkdir();
-            File upFile = new File(upFolder, sampleFileName);
-            FileOutputStream fos = new FileOutputStream(upFile);
-            InputStream is = assets.open(sampleFileName);
-            int count;
-            byte[] buffer = new byte[1024];
-            while ((count = is.read(buffer, 0, buffer.length)) >= 0) {
-                fos.write(buffer, 0, count);
+                }, new Handler());
             }
-            is.close();
-            fos.close();
-        } catch (IOException e) {
-            Toast.makeText(this, R.string.error_copying_sample_file, Toast.LENGTH_SHORT).show();
-            Timber.e(e, getString(R.string.error_copying_sample_file));
-        }*/
+        });
 
-        mFrame = findViewById(R.id.frame);
-    }
-
-    private void startReadRootFolder() {
-        ReadRemoteFolderOperation refreshOperation = new ReadRemoteFolderOperation(FileUtils.PATH_SEPARATOR+"testeur/");
-        // root folder
-        refreshOperation.execute(client, this, mHandler);
-    }
-
-    private void startFolderCreation(String newFolderPath) {
-        CreateRemoteFolderOperation createOperation = new CreateRemoteFolderOperation(newFolderPath, false);
-        createOperation.execute( client , this , mHandler);
-    }
-
-    private void startUploadd (File fileToUpload, String remotePath, String mimeType) {
-        long timeStampLong = fileToUpload.lastModified() / 1000;
-        String timeStamp = Long.toString(timeStampLong);
-        UploadRemoteFileOperation uploadOperation = new UploadRemoteFileOperation( fileToUpload.getAbsolutePath(), remotePath, mimeType, timeStamp);
-        uploadOperation.addDatatransferProgressListener(this);
-        uploadOperation.execute(client, this, mHandler);
-    }
-
-
-   /* @Override
-    public void onRemoteOperationFinish(RemoteOperation operation, RemoteOperationResult result) {
-        if (operation instanceof ReadRemoteFolderOperation) {
-            if (result.isSuccess()) {
-                List<RemoteFile> files = (List<RemoteFile>) result.getData();
-                // do your stuff here
-            }
-        }
-    }*/
-
-    @Override
-    public void onDestroy() {
-        File upFolder = new File(getCacheDir(), getString(R.string.upload_folder_path));
-        File upFile = upFolder.listFiles()[0];
-        upFile.delete();
-        upFolder.delete();
-        super.onDestroy();
-    }
-
-    public void onClickHandler(View button) {
-        switch (button.getId()) {
-            case R.id.button_refresh:
-                startRefresh();
-                break;
-            case R.id.button_upload:
+        findViewById(R.id.button_upload).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
                 testCreateAndUpload();
-                break;
-            case R.id.button_delete_remote:
-                startRemoteDeletion();
-                break;
-            case R.id.button_download:
-                startDownload();
-                break;
-            case R.id.button_delete_local:
-                startLocalDeletion();
-                break;
-            default:
-                Toast.makeText(this, R.string.youre_doing_it_wrong, Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void startRefresh() {
-        ReadRemoteFolderOperation refreshOperation = new ReadRemoteFolderOperation(FileUtils.PATH_SEPARATOR);
-        refreshOperation.execute(mClient, this, mHandler);
-    }
-
-    private void testCreateAndUpload() {
-        Toast.makeText(this,"Launch", Toast.LENGTH_SHORT).show();
-        createCloudFolder("/conseil/communications/", this, mHandler);
-        File sdcard = Environment.getExternalStorageDirectory();
-        File file = new File(sdcard,"/Download/1532.pdf");
-        uploadFileOnCloud(file,"/conseil/fichier2.pdf","application/pdf",this, mHandler, this);
-    }
-
-    private void startRemoteDeletion() {
-        File upFolder = new File(getCacheDir(), getString(R.string.upload_folder_path));
-        File fileToUpload = upFolder.listFiles()[0];
-        String remotePath = FileUtils.PATH_SEPARATOR + fileToUpload.getName();
-
-        RemoveRemoteFileOperation removeOperation = new RemoveRemoteFileOperation(remotePath);
-        removeOperation.execute(mClient, this, mHandler);
-    }
-
-    private void startDownload() {
-        File downFolder = new File(getCacheDir(), getString(R.string.download_folder_path));
-        downFolder.mkdir();
-        File upFolder = new File(getCacheDir(), getString(R.string.upload_folder_path));
-        File fileToUpload = upFolder.listFiles()[0];
-        String remotePath = FileUtils.PATH_SEPARATOR + fileToUpload.getName();
-
-        DownloadRemoteFileOperation downloadOperation = new DownloadRemoteFileOperation(remotePath,
-                downFolder.getAbsolutePath());
-        downloadOperation.addDatatransferProgressListener(this);
-        downloadOperation.execute(mClient, this, mHandler);
-    }
-
-    private void startLocalDeletion() {
-        File downFolder = new File(getCacheDir(), getString(R.string.download_folder_path));
-        File downloadedFile = downFolder.listFiles()[0];
-        if (!downloadedFile.delete() && downloadedFile.exists()) {
-            Toast.makeText(this, R.string.error_deleting_local_file, Toast.LENGTH_SHORT).show();
-        } else {
-            ((TextView) findViewById(R.id.download_progress)).setText("0%");
-            findViewById(R.id.frame).setBackgroundDrawable(null);
-        }
-    }
-
-    @Override
-    public void onRemoteOperationFinish(RemoteOperation operation, RemoteOperationResult result) {
-        if (!result.isSuccess()) {
-            Toast.makeText(this, R.string.todo_operation_finished_in_fail, Toast.LENGTH_SHORT).show();
-            Timber.e(result.getException(), result.getLogMessage());
-
-        } else if (operation instanceof ReadRemoteFolderOperation) {
-            onSuccessfulRefresh(result);
-
-        } else if (operation instanceof com.owncloud.android.lib.resources.files.UploadRemoteFileOperation) {
-            onSuccessfulUpload();
-
-        } else if (operation instanceof RemoveRemoteFileOperation) {
-            onSuccessfulRemoteDeletion();
-
-        } else if (operation instanceof DownloadRemoteFileOperation) {
-            onSuccessfulDownload();
-
-        } else {
-            Toast.makeText(this, R.string.todo_operation_finished_in_success, Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void onSuccessfulRefresh(RemoteOperationResult result) {
-        mFilesAdapter.clear();
-        List<RemoteFile> files = new ArrayList<>();
-        for (RemoteFile remoteFile : (List<RemoteFile>) result.getData()) {
-            files.add(remoteFile);
-        }
-        for (RemoteFile file : files) {
-            mFilesAdapter.add(file);
-        }
-        mFilesAdapter.remove(mFilesAdapter.getItem(0));
-        mFilesAdapter.notifyDataSetChanged();
-    }
-
-    private void onSuccessfulUpload() {
-        startRefresh();
-    }
-
-    private void onSuccessfulRemoteDeletion() {
-        startRefresh();
-        TextView progressView = findViewById(R.id.upload_progress);
-        if (progressView != null) {
-            progressView.setText("0%");
-        }
-    }
-
-    private void onSuccessfulDownload() {
-        File downFolder = new File(getCacheDir(), getString(R.string.download_folder_path));
-        File downloadedFile = downFolder.listFiles()[0];
-        BitmapDrawable bDraw = new BitmapDrawable(getResources(), downloadedFile.getAbsolutePath());
-        mFrame.setBackgroundDrawable(bDraw);
-    }
-
-    @SuppressLint("SetTextI18n")
-    @Override
-    public void onTransferProgress(long progressRate, long totalTransferredSoFar, long totalToTransfer, String fileName) {
-        final long percentage = (totalToTransfer > 0 ? totalTransferredSoFar * 100 / totalToTransfer : 0);
-        final boolean upload = fileName.contains(getString(R.string.upload_folder_path));
-        Timber.d("progressRate %s", percentage);
-        mHandler.post(() -> {
-            TextView progressView;
-            if (upload) {
-                progressView = findViewById(R.id.upload_progress);
-            } else {
-                progressView = findViewById(R.id.download_progress);
-            }
-            if (progressView != null) {
-                progressView.setText(percentage + "%");
             }
         });
     }
 
-    // user agent
-    @SuppressLint("StringFormatInvalid")
-    private String getUserAgent() {
-        String appString = getResources().getString(R.string.user_agent);
-        String packageName = getPackageName();
-        String version = "";
+    private void testCreateAndUpload() {
+        Toast.makeText(this,"Launch", Toast.LENGTH_SHORT).show();
 
-        PackageInfo pInfo;
-        try {
-            pInfo = getPackageManager().getPackageInfo(packageName, 0);
-            if (pInfo != null) {
-                version = pInfo.versionName;
-            }
-        } catch (PackageManager.NameNotFoundException e) {
-            Timber.e(e);
-        }
 
-        // Mozilla/5.0 (Android) ownCloud-android/1.7.0
-        return String.format(appString, version);
+        createCloudFolder("/arcadiusTest/", (caller, result) -> {
+            Timber.tag("hello").e(result.getHttpPhrase());
+        }, new Handler());
+        createCloudFolder("/arcadiusTest/communications/", (caller, result) -> {
+
+        }, new Handler());
+        File sdcard = Environment.getExternalStorageDirectory();
+        File file = new File(sdcard,"/Download/1532.pdf");
+        uploadFileOnCloud(file,"/arcadius/fichier4.pdf","application/pdf",(caller, result) -> {
+
+        }, new Handler(), (read, transferred, percent, absolutePath) -> {
+
+        });
     }
+
 }
